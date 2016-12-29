@@ -1,0 +1,175 @@
+/* Set location to output file and name the resulting pdf */
+ ODS pdf File = "F:\STAT550\Final Project\Final_Result.pdf"; 
+ ODS Listing Close;
+
+/*Import data from excel file and clean it up*/
+proc import out = baseball
+ datafile = "F:\STAT550\Final Project\baseball.xlsx"
+     dbms = Excel replace;
+run;
+
+/* Removes columns which were blank when imported */
+proc sql;
+ alter table baseball
+ drop f29, f30, f31, f32, f33, f34, f35, f36, f37, f38, f39, 
+	  f40, f41, f42, f43, f44, f45, f46, f47, f48, f49, f50, f51;
+		
+/* Removes rows that were blank when data was imported */
+data baseball;
+ set baseball;
+  if missing(coalesceC(of _character_)) and missing(coalesce(of	_numeric_)) then delete;
+run;
+
+/* Drops additional blank columns created */
+proc sql;
+ alter table baseball
+ drop f52, f53, f54, f55, f56, f57, f58, f59, f60;
+
+/* Runs PC on the variables specified and outputs the eigenvalues, eigenvectors, and data */
+proc princomp data = baseball out = princomp;
+ var BatAB -- FieldFPCT;
+ ods output Eigenvalues  = eigenval;
+ ods output Eigenvectors = eigenvec;
+run;
+
+/* Plots the eigenvalues vs the numbers */
+proc gplot data = eigenval;
+ plot eigenvalue * number;
+run;
+
+/* Creates plots of the three chosen PC against each other */
+proc gplot data = eigenvec;
+ plot Prin1 * Prin2 / vref = 0 href = 0; 
+ plot Prin3 * Prin1 / href = -0.2  , 0.2;
+ plot Prin3 * Prin2 / href = -0.25 , 0.25;
+ symbol1 c = black v = dot I = none pointlabel = ("#Variable");  /* Sets color to black, type to dot, and label to the variable */
+run;
+
+/* Creates another form of the plot for the different PC labeled by states */
+proc gplot data = princomp;
+ plot Prin2 * Prin1 = 1 Prin3 * Prin1 = 1 Prin3 * Prin2 = 1 / vaxis = axis1 haxis = axis2 frame;
+ axis1 Order = (-7.0 to 7.0 by 1.0);
+ axis2 Order = (-7.0 tp 7.0 by 1.0);
+ symbol1 c = black v = dot I = none pointlabel = ("#State");  /* Sets color to black, type to dot, and label to the state */
+run;
+
+/* Creates plots for PC separating by leagues and whether playoff teams */
+proc gplot data = princomp;
+ symbol1 value = squarefilled   color = blue I = none pointlabel = none;                                                                        
+ symbol2 value = trianglefilled color = red  I = none pointlabel = none;                                                                         
+ plot prin1 * prin2 = league;
+ plot prin2 * prin3 = league;
+ plot prin1 * prin3 = league;
+ plot prin1 * prin2 = playoffs;
+ plot prin2 * prin3 = playoffs;
+ plot prin1 * prin3 = playoffs;
+run;
+
+/* Runs logistic regression on the data using stepwise selection */
+proc logistic data = princomp desc;
+ model playoffs = league BatAB -- FieldFPCT / selection = stepwise;
+ output out = predict predicted = phat;
+run;
+
+/* Runs logistic regreesion on the data using the PC chosen */
+proc logistic data = princomp descending;
+ model playoffs = prin1 prin2 prin3;
+ output out = predict1 predicted = phat;
+run;
+
+/* Creates a new data set based off stepwise logistic regression which assigns 1 and 0 to a new variable  
+   for teams based on if predicted to make the playoffs or not */
+data newpred;
+ set predict;
+  if phat > 0.6 then newplayoffs = 1;
+     else newplayoffs = 0;
+run;
+
+title 'all variable logistic'; /* Sets title of the table created next */
+
+/* Creates 2 x 2 table using playoffs and predicted playoffs for stepwise logistic 
+   regressionto show correct decisions, false-positives, and false-negatives. */
+proc freq data = newpred;
+ tables newplayoffs * playoffs;
+run;
+
+/* Creates a new data set based off PC logistic regression which assigns 1 and 0 to a new variable  
+   for teams based on if predicted to make the playoffs or not */
+data newpred1;
+ set predict1;
+  if phat > 0.6 then newplayoffs = 1;
+     else newplayoffs = 0;
+run;
+
+title1 'principal logistic'; /* Sets title for table created next */
+
+/* Creates 2 x 2 table using playoffs and predicted playoffs for PC logistic regression to show 
+   correct decisions, false-positives, and false-negatives. */
+proc freq data = newpred1;
+ tables newplayoffs * playoffs;
+run;
+
+/* Runs cluster analysis on the original data */
+proc cluster data = baseball S standard method = average pseudo outtree = tree;
+ var BatAB -- FieldFPCT;
+ id  team;
+run;
+
+/* Creates a cluster tree for the data */
+proc tree data = tree out = treeout nclusters = 6;
+ copy BatAB -- FieldFPCT;
+ id   team;
+run;
+
+/* Soprts the treeout data by cluster */
+proc sort data = treeout;
+ by cluster;
+run;
+
+/* Runs PC on the data */
+proc princomp data = baseball out = scores12;
+ var BatAB -- FieldFPCT;
+run;
+
+/* Sorts the treeout data by team */
+proc sort data treeout;
+ by team;
+run;
+
+/* Sorts the scores12 data by the team */
+proc sort data = scores12;
+ by team;
+run;
+
+/* Creates a dataset called comb that merges both treeout and scores 12 by teams */
+data comb;
+ merge scores12 treeout;
+ by team;
+run;
+
+/* Prints prin1 vs prin2 with 6 different clusters with each point labeled by playoffs made or not */ 
+proc gplot data = comb;
+ plot prin1 * prin2 = cluster;
+ symbol1 c = black  v = circlefilled   I = none pointlabel = (c = black  h = 0.75 "#playoffs");
+ symbol2 c = blue   v = trianglefilled I = none pointlabel = (c = blue   h = 0.75 "#playoffs");
+ symbol3 c = red    v = square         I = none pointlabel = (c = red    h = 0.75 "#playoffs");
+ symbol4 c = green  v = circle         I = none pointlabel = (c = green  h = 0.75 "#playoffs");
+ symbol5 c = orange v = diamondfilled  I = none pointlabel = (c = orange h = 0.75 "#playoffs");
+ symbol6 c = purple v = square         I = none pointlabel = (c = purple h = 0.75 "#playoffs");
+run;
+quit;
+
+/* Prints prin1 vs prin2 with 6 different clusters with each point labeled by teams */ 
+proc gplot data = comb;
+ plot prin1 * prin2 = cluster;
+ symbol1 c = black  v = circlefilled   I = none pointlabel = (c = black  h = 0.75 "#team");
+ symbol2 c = blue   v = trianglefilled I = none pointlabel = (c = blue   h = 0.75 "#team");
+ symbol3 c = red    v = square         I = none pointlabel = (c = red    h = 0.75 "#team");
+ symbol4 c = green  v = circle         I = none pointlabel = (c = green  h = 0.75 "#team");
+ symbol5 c = orange v = diamondfilled  I = none pointlabel = (c = orange h = 0.75 "#team");
+ symbol6 c = purple v = square         I = none pointlabel = (c = purple h = 0.75 "#team");
+run;
+quit;
+
+ODS Listing;
+ODS PDF Close;
